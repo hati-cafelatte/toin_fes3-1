@@ -17,7 +17,7 @@ export function requireAuth(app, { onReady } = {}) {
   gate.className = "overlay";
   gate.id = "auth-gate";
   gate.innerHTML = `
-    <h2>🍜 食販システム</h2>
+    <h2>食販システム</h2>
     <p id="auth-msg">サインインしてください</p>
     <button class="btn" id="auth-signin-btn" style="width:auto;padding:14px 28px;">Googleでサインイン</button>
   `;
