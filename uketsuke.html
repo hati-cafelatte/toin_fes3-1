@@ -44,7 +44,7 @@
 </div>
 
 <script type="module">
-import { getApp_, getDb, watchSettings, createOrder } from "./Db.js";
+import { getApp_, getDb, watchSettings, createOrder, PRICE_PER_MEAL } from "./Db.js";
 import { requireAuth } from "./Auth.js";
 
 const app = getApp_();
@@ -68,7 +68,9 @@ document.getElementById("spicy-minus").onclick = () => { spicy = Math.max(0, spi
 render();
 
 document.getElementById("submit-btn").onclick = () => {
-  document.getElementById("confirm-detail").textContent = `普通 ${normal}個 / 辛味 ${spicy}個`;
+  const total = (normal + spicy) * PRICE_PER_MEAL;
+  document.getElementById("confirm-detail").innerHTML =
+    `普通 ${normal}個 / 辛味 ${spicy}個<br><span style="font-size:1.6rem;">${total.toLocaleString()}円</span>`;
   document.getElementById("confirm-modal").style.display = "flex";
 };
 document.getElementById("confirm-no-btn").onclick = () => {

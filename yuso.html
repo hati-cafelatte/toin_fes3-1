@@ -44,7 +44,13 @@ function render() {
     document.getElementById("empty-msg").style.display = "block";
   } else {
     document.getElementById("empty-msg").style.display = "none";
-    listEl.innerHTML = orders.map((o) => {
+    // 新しい注文ほど上に来るように並び替え(pending write中=createdAtがnullのものを最優先)
+    const sorted = orders.slice().sort((a, b) => {
+      const at = a.createdAt ? a.createdAt.toMillis() : Infinity;
+      const bt = b.createdAt ? b.createdAt.toMillis() : Infinity;
+      return bt - at;
+    });
+    listEl.innerHTML = sorted.map((o) => {
       const createdMs = o.createdAt ? o.createdAt.toMillis() : now; // pending write中はnull → 新規扱い
       const isNew = (now - createdMs) < thresholdMs;
       const total = (o.normal || 0) + (o.spicy || 0);

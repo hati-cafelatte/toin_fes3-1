@@ -6,6 +6,7 @@ import {
 import { firebaseConfig } from "./firebase-config.js";
 
 const DEFAULT_SETTINGS = { maxOrderNumber: 30, newOrderThresholdMin: 2, reminderDisplaySec: 30 };
+export const PRICE_PER_MEAL = 300; // 1食あたりの価格(円)
 
 export function getApp_() {
   return getApps().length ? getApp() : initializeApp(firebaseConfig);
@@ -46,6 +47,8 @@ export async function sendReminder(db) {
 }
 
 // ---- 注文作成(トランザクションで空き番号を安全に払い出す) ----
+// 「最小の空き番号」ではなく、前回払い出した番号の次から maxOrderNumber まで循環的に探す。
+// (同じ番号札を続けて使い回さないようにするため)
 export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
   return await runTransaction(db, async (tx) => {
     const queueStateRef = doc(db, "meta", "queueState");
@@ -54,10 +57,14 @@ export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
     const queueStateSnap = await tx.get(queueStateRef);
     const counterSnap = await tx.get(counterRef);
 
-    const slots = queueStateSnap.exists() ? (queueStateSnap.data().slots || []) : [];
+    const qsData = queueStateSnap.exists() ? queueStateSnap.data() : {};
+    const slots = qsData.slots || [];
+    const lastAssigned = qsData.lastAssigned || 0;
+
     let assigned = -1;
-    for (let i = 0; i < maxOrderNumber; i++) {
-      if (!slots[i]) { assigned = i + 1; break; }
+    for (let step = 1; step <= maxOrderNumber; step++) {
+      const candidate = ((lastAssigned + step - 1) % maxOrderNumber) + 1; // 1..maxOrderNumberを循環
+      if (!slots[candidate - 1]) { assigned = candidate; break; }
     }
     if (assigned === -1) {
       throw new Error("空いている注文番号がありません。設定(⑤)で最大注文番号を増やすか、既存の注文を捌いてください。");
@@ -71,9 +78,15 @@ export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
     const activeRef = doc(collection(db, "activeOrders"));
     const historyRef = doc(collection(db, "orderHistory"));
 
-    tx.set(activeRef, { queueNumber: assigned, normal, spicy, createdAt: serverTimestamp() });
-    tx.set(historyRef, { historyId: nextHistoryId, queueNumber: assigned, normal, spicy, createdAt: serverTimestamp() });
-    tx.set(queueStateRef, { slots: newSlots }, { merge: true });
+    tx.set(activeRef, {
+      queueNumber: assigned, normal, spicy, createdAt: serverTimestamp(),
+      historyDocId: historyRef.id, // 削除(取消)時に履歴側も連動させるためのリンク
+    });
+    tx.set(historyRef, {
+      historyId: nextHistoryId, queueNumber: assigned, normal, spicy, createdAt: serverTimestamp(),
+      canceled: false,
+    });
+    tx.set(queueStateRef, { slots: newSlots, lastAssigned: assigned }, { merge: true });
     tx.set(counterRef, { historyCounter: nextHistoryId }, { merge: true });
 
     return assigned;
@@ -93,6 +106,27 @@ export async function completeOrder(db, orderId, queueNumber) {
   });
 }
 
+// ---- 注文取消(番号を解放し、履歴側もcanceled扱いにする。売上から除外される) ----
+export async function cancelOrder(db, orderId, queueNumber, historyDocId) {
+  await runTransaction(db, async (tx) => {
+    const queueStateRef = doc(db, "meta", "queueState");
+    const activeRef = doc(db, "activeOrders", orderId);
+    const historyRef = historyDocId ? doc(db, "orderHistory", historyDocId) : null;
+
+    const queueStateSnap = await tx.get(queueStateRef);
+    const historySnap = historyRef ? await tx.get(historyRef) : null;
+
+    const slots = queueStateSnap.exists() ? (queueStateSnap.data().slots || []) : [];
+    if (slots[queueNumber - 1] !== undefined) slots[queueNumber - 1] = false;
+
+    tx.delete(activeRef);
+    tx.set(queueStateRef, { slots }, { merge: true });
+    if (historyRef && historySnap && historySnap.exists()) {
+      tx.set(historyRef, { canceled: true, canceledAt: serverTimestamp() }, { merge: true });
+    }
+  });
+}
+
 // ---- 履歴(admin用、historyId昇順) ----
 export async function getHistoryOnce(db) {
   const snap = await getDocs(query(collection(db, "orderHistory"), orderBy("historyId", "asc")));
@@ -109,7 +143,7 @@ export async function resetAll(db) {
   history.forEach((h) => batch.delete(doc(db, "orderHistory", h.id)));
   activeSnap.forEach((d) => batch.delete(doc(db, "activeOrders", d.id)));
   batch.set(doc(db, "meta", "counters"), { historyCounter: 0 });
-  batch.set(doc(db, "meta", "queueState"), { slots: [] });
+  batch.set(doc(db, "meta", "queueState"), { slots: [], lastAssigned: 0 });
   await batch.commit();
   return history;
 }
