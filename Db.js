@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, doc, setDoc, addDoc, deleteDoc, collection, onSnapshot,
-  runTransaction, serverTimestamp, query, orderBy, getDocs, writeBatch
+  runTransaction, serverTimestamp, query, orderBy, getDocs, getDoc, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -55,6 +55,31 @@ export async function sendReminder(db) {
   await setDoc(doc(db, "meta", "reminder"), { triggeredAt: serverTimestamp() });
 }
 
+// ---- 開催日(何日目か)の管理 ----
+// meta/session の day フィールドで管理。1から始まり、「次の日へ進める」操作でのみ増える。
+export async function getCurrentDayOnce(db) {
+  const snap = await getDoc(doc(db, "meta", "session"));
+  return snap.exists() ? (snap.data().day || 1) : 1;
+}
+
+// 注文番号(queueState)とその日の履歴番号(counters)だけをリセットし、
+// dayを+1する。activeOrders/orderHistoryのデータそのものは一切消さない。
+// (→ adminでは日ごとにタグ(day)で絞り込んで確認できる)
+export async function startNewDay(db) {
+  return await runTransaction(db, async (tx) => {
+    const sessionRef = doc(db, "meta", "session");
+    const sessionSnap = await tx.get(sessionRef);
+    const currentDay = sessionSnap.exists() ? (sessionSnap.data().day || 1) : 1;
+    const nextDay = currentDay + 1;
+
+    tx.set(sessionRef, { day: nextDay }, { merge: true });
+    tx.set(doc(db, "meta", "queueState"), { slots: [], lastAssigned: 0 });
+    tx.set(doc(db, "meta", "counters"), { historyCounter: 0 });
+
+    return nextDay;
+  });
+}
+
 // ---- 注文作成(トランザクションで空き番号を安全に払い出す) ----
 // 「最小の空き番号」ではなく、前回払い出した番号の次から maxOrderNumber まで循環的に探す。
 // (同じ番号札を続けて使い回さないようにするため)
@@ -62,13 +87,16 @@ export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
   return await runTransaction(db, async (tx) => {
     const queueStateRef = doc(db, "meta", "queueState");
     const counterRef = doc(db, "meta", "counters");
+    const sessionRef = doc(db, "meta", "session");
     // 読み取りは先にまとめて行う(Firestoreトランザクションの制約)
     const queueStateSnap = await tx.get(queueStateRef);
     const counterSnap = await tx.get(counterRef);
+    const sessionSnap = await tx.get(sessionRef);
 
     const qsData = queueStateSnap.exists() ? queueStateSnap.data() : {};
     const slots = qsData.slots || [];
     const lastAssigned = qsData.lastAssigned || 0;
+    const currentDay = sessionSnap.exists() ? (sessionSnap.data().day || 1) : 1;
 
     let assigned = -1;
     for (let step = 1; step <= maxOrderNumber; step++) {
@@ -88,12 +116,12 @@ export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
     const historyRef = doc(collection(db, "orderHistory"));
 
     tx.set(activeRef, {
-      queueNumber: assigned, normal, spicy, createdAt: serverTimestamp(),
+      queueNumber: assigned, normal, spicy, createdAt: serverTimestamp(), day: currentDay,
       historyDocId: historyRef.id, // 削除(取消)時に履歴側も連動させるためのリンク
     });
     tx.set(historyRef, {
       historyId: nextHistoryId, queueNumber: assigned, normal, spicy, createdAt: serverTimestamp(),
-      canceled: false,
+      day: currentDay, canceled: false,
     });
     tx.set(queueStateRef, { slots: newSlots, lastAssigned: assigned }, { merge: true });
     tx.set(counterRef, { historyCounter: nextHistoryId }, { merge: true });
@@ -173,6 +201,7 @@ export async function resetAll(db) {
   activeSnap.forEach((d) => batch.delete(doc(db, "activeOrders", d.id)));
   batch.set(doc(db, "meta", "counters"), { historyCounter: 0 });
   batch.set(doc(db, "meta", "queueState"), { slots: [], lastAssigned: 0 });
+  batch.set(doc(db, "meta", "session"), { day: 1 });
   await batch.commit();
   return history;
 }
