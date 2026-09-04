@@ -34,19 +34,27 @@
 
   <hr style="margin:24px 0;">
   <h2>次の日へ進める</h2>
-  <p class="muted">注文番号を1からリセットして、翌日の受付を開始します。<b>これまでのデータは消えません</b>(上のタブで日ごとに確認できます)。営業終了後・翌日の受付開始前に押してください。</p>
+  <p class="muted">注文番号を1からリセットして、翌日の受付を開始。<b>これまでのデータは消えません</b>(上のタブで日ごとに確認できる)。営業終了後・翌日の受付開始前に押す。</p>
   <button class="btn" id="nextday-btn">次の日へ進める(番号だけリセット)</button>
 
   <hr style="margin:24px 0;">
+  <h2>指定日のデータ削除(デバッグ用)</h2>
+  <p class="muted">動作確認で作ったテスト注文だけを消したいときに使う。選んだ日の注文履歴・進行中の注文がすべて削除される(<b>CSVには出力されない</b>)。選んだ日が現在受付中の日の場合、注文番号も1にリセットされる。</p>
+  <label>削除する日
+    <select id="delete-day-select"></select>
+  </label>
+  <button class="btn btn-danger" id="delete-day-btn">選択した日のデータを削除</button>
+
+  <hr style="margin:24px 0;">
   <h2>最終リセット(保険)</h2>
-  <p class="muted">デバッグ時と全日程が終わったあとの保険用。これまでの全データ(全日程分)をCSVでエクスポートしてから、完全にクリア</p>
+  <p class="muted">全日程が終わったあとの保険用です。これまでの全データ(全日程分)をCSVでエクスポートしてから、完全にクリアします(注文番号・日数カウントも1に戻ります)。</p>
   <button class="btn btn-danger" id="reset-btn">CSVエクスポート → 完全リセット</button>
 </div>
 
 <script type="module">
 import {
   getApp_, getDb, getHistoryOnce, resetAll, getActiveOrdersCountOnce,
-  getCurrentDayOnce, startNewDay, withTimeout, PRICE_PER_MEAL
+  getCurrentDayOnce, startNewDay, deleteDayData, withTimeout, PRICE_PER_MEAL
 } from "./Db.js";
 import { requireAuth } from "./Auth.js";
 import { checkAdminPassword } from "./AdminAuth.js";
@@ -92,6 +100,7 @@ async function loadAll() {
   }
   page = 0;
   renderDayTabs();
+  renderDeleteDaySelect();
   renderSummary();
   renderPage();
 }
@@ -134,6 +143,16 @@ function renderDayTabs() {
 
   tabsEl.appendChild(makeBtn("全日程", "all"));
   sortedDays.forEach((d) => tabsEl.appendChild(makeBtn(`${d}日目`, d)));
+}
+
+function renderDeleteDaySelect() {
+  const days = new Set(history.map((h) => h.day || 1));
+  days.add(currentDay);
+  const sortedDays = Array.from(days).sort((a, b) => a - b);
+  const sel = document.getElementById("delete-day-select");
+  const prevValue = sel.value;
+  sel.innerHTML = sortedDays.map((d) => `<option value="${d}">${d}日目${d === currentDay ? "(受付中)" : ""}</option>`).join("");
+  if (sortedDays.includes(Number(prevValue))) sel.value = prevValue;
 }
 
 function renderSummary() {
@@ -237,6 +256,33 @@ document.getElementById("nextday-btn").onclick = async () => {
     alert("エラー: " + e.message);
   } finally {
     btn.disabled = false;
+  }
+};
+
+// ---- 指定した日のデータだけ削除(デバッグ用) ----
+document.getElementById("delete-day-btn").onclick = async () => {
+  if (!navigator.onLine) {
+    alert("オフラインのようです。通信状態を確認してください。");
+    return;
+  }
+  const day = Number(document.getElementById("delete-day-select").value);
+  const targetCount = history.filter((h) => (h.day || 1) === day).length;
+  const isCurrent = day === currentDay;
+  const msg = `${day}日目のデータ(履歴${targetCount}件${isCurrent ? "、進行中の注文も含む" : ""})を完全に削除します。\nCSVには保存されません。この操作は取り消せません。\n本当によろしいですか?`;
+  if (!confirm(msg)) return;
+
+  const btn = document.getElementById("delete-day-btn");
+  btn.disabled = true;
+  btn.textContent = "処理中...";
+  try {
+    const result = await withTimeout(deleteDayData(db, day));
+    await loadAll();
+    alert(`${day}日目のデータを削除しました(履歴${result.deletedHistory}件、進行中${result.deletedActive}件)`);
+  } catch (e) {
+    alert("エラー: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "選択した日のデータを削除";
   }
 };
 
