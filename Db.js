@@ -8,6 +8,15 @@ import { firebaseConfig } from "./firebase-config.js";
 const DEFAULT_SETTINGS = { maxOrderNumber: 30, newOrderThresholdMin: 2, reminderDisplaySec: 30 };
 export const PRICE_PER_MEAL = 300; // 1食あたりの価格(円)
 
+// 通信が固まった場合に一定時間で諦めてエラーを返すためのラッパー
+// (オフライン/電波不良でPromiseが永遠に解決しない事態を防ぐ)
+export function withTimeout(promise, ms = 8000, message = "通信がタイムアウトしました。電波状況を確認してもう一度お試しください。") {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
+}
+
 export function getApp_() {
   return getApps().length ? getApp() : initializeApp(firebaseConfig);
 }
@@ -94,24 +103,37 @@ export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
 }
 
 // ---- 受け渡し完了(番号を解放) ----
+// 戻り値: true=完了処理を実行した / false=既に他の端末で処理済みだった(何もしていない)
 export async function completeOrder(db, orderId, queueNumber) {
-  await runTransaction(db, async (tx) => {
+  return await runTransaction(db, async (tx) => {
     const queueStateRef = doc(db, "meta", "queueState");
     const activeRef = doc(db, "activeOrders", orderId);
+    // 先に対象注文がまだ存在するか確認。既に完了/取消済みなら何もしない。
+    // (ここを確認しないと、別端末が既に処理済みの番号を、後から届いたリクエストが
+    //  誤って解放してしまい、既に再利用された新しい注文の番号まで壊す恐れがある)
+    const activeSnap = await tx.get(activeRef);
+    if (!activeSnap.exists()) return false;
+
     const queueStateSnap = await tx.get(queueStateRef);
     const slots = queueStateSnap.exists() ? (queueStateSnap.data().slots || []) : [];
     if (slots[queueNumber - 1] !== undefined) slots[queueNumber - 1] = false;
     tx.delete(activeRef);
     tx.set(queueStateRef, { slots }, { merge: true });
+    return true;
   });
 }
 
 // ---- 注文取消(番号を解放し、履歴側もcanceled扱いにする。売上から除外される) ----
+// 戻り値: true=取消処理を実行した / false=既に他の端末で処理済みだった(何もしていない)
 export async function cancelOrder(db, orderId, queueNumber, historyDocId) {
-  await runTransaction(db, async (tx) => {
+  return await runTransaction(db, async (tx) => {
     const queueStateRef = doc(db, "meta", "queueState");
     const activeRef = doc(db, "activeOrders", orderId);
     const historyRef = historyDocId ? doc(db, "orderHistory", historyDocId) : null;
+
+    // 先に対象注文がまだ存在するか確認(completeOrderと同じ理由)
+    const activeSnap = await tx.get(activeRef);
+    if (!activeSnap.exists()) return false;
 
     const queueStateSnap = await tx.get(queueStateRef);
     const historySnap = historyRef ? await tx.get(historyRef) : null;
@@ -124,6 +146,7 @@ export async function cancelOrder(db, orderId, queueNumber, historyDocId) {
     if (historyRef && historySnap && historySnap.exists()) {
       tx.set(historyRef, { canceled: true, canceledAt: serverTimestamp() }, { merge: true });
     }
+    return true;
   });
 }
 
@@ -133,6 +156,12 @@ export async function getHistoryOnce(db) {
   const list = [];
   snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
   return list;
+}
+
+// ---- 進行中の注文の件数だけ取得(リセット前の警告表示用) ----
+export async function getActiveOrdersCountOnce(db) {
+  const snap = await getDocs(collection(db, "activeOrders"));
+  return snap.size;
 }
 
 // ---- リセット(CSV出力用データを返してから全消去) ----
