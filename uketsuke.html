@@ -70,7 +70,7 @@ render();
 document.getElementById("submit-btn").onclick = () => {
   const total = (normal + spicy) * PRICE_PER_MEAL;
   document.getElementById("confirm-detail").innerHTML =
-    `普通 ${normal}個 / 辛味 ${spicy}個<br><span style="font-size:1.6rem;">${total.toLocaleString()}円</span>`;
+    `普通 ${normal}個 / 辛味 ${spicy}個<br><span style="font-size:1.6rem;font-weight:bold;">${total.toLocaleString()}円</span>`;
   document.getElementById("confirm-modal").style.display = "flex";
 };
 document.getElementById("confirm-no-btn").onclick = () => {
