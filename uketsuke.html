@@ -44,7 +44,7 @@
 </div>
 
 <script type="module">
-import { getApp_, getDb, watchSettings, createOrder, PRICE_PER_MEAL } from "./Db.js";
+import { getApp_, getDb, watchSettings, createOrder, withTimeout, PRICE_PER_MEAL } from "./Db.js";
 import { requireAuth } from "./Auth.js";
 
 const app = getApp_();
@@ -80,9 +80,14 @@ document.getElementById("confirm-yes-btn").onclick = async () => {
   const btn = document.getElementById("confirm-yes-btn");
   btn.disabled = true;
   document.getElementById("err").textContent = "";
+  if (!navigator.onLine) {
+    document.getElementById("err").textContent = "オフラインのようです。通信状態を確認してください。";
+    btn.disabled = false;
+    return;
+  }
   try {
     const maxOrderNumber = settings ? settings.maxOrderNumber : 30;
-    const num = await createOrder(db, { normal, spicy }, maxOrderNumber);
+    const num = await withTimeout(createOrder(db, { normal, spicy }, maxOrderNumber));
     document.getElementById("confirm-modal").style.display = "none";
     document.getElementById("done-number").textContent = num;
     document.getElementById("done-modal").style.display = "flex";
