@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, doc, setDoc, addDoc, deleteDoc, collection, onSnapshot,
-  runTransaction, serverTimestamp, query, orderBy, getDocs, getDoc, writeBatch
+  runTransaction, serverTimestamp, query, orderBy, where, getDocs, getDoc, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -190,6 +190,26 @@ export async function getHistoryOnce(db) {
 export async function getActiveOrdersCountOnce(db) {
   const snap = await getDocs(collection(db, "activeOrders"));
   return snap.size;
+}
+
+// ---- 指定した日のデータだけ削除(デバッグ用。CSVには出力しない) ----
+// 削除対象の日が「現在受付中の日」だった場合は、注文番号カウンタもリセットする。
+export async function deleteDayData(db, day) {
+  const historySnap = await getDocs(query(collection(db, "orderHistory"), where("day", "==", day)));
+  const activeSnap = await getDocs(query(collection(db, "activeOrders"), where("day", "==", day)));
+
+  const batch = writeBatch(db);
+  historySnap.forEach((d) => batch.delete(doc(db, "orderHistory", d.id)));
+  activeSnap.forEach((d) => batch.delete(doc(db, "activeOrders", d.id)));
+
+  const currentDay = await getCurrentDayOnce(db);
+  if (day === currentDay) {
+    batch.set(doc(db, "meta", "queueState"), { slots: [], lastAssigned: 0 });
+    batch.set(doc(db, "meta", "counters"), { historyCounter: 0 });
+  }
+
+  await batch.commit();
+  return { deletedHistory: historySnap.size, deletedActive: activeSnap.size };
 }
 
 // ---- リセット(CSV出力用データを返してから全消去) ----
