@@ -35,7 +35,7 @@
 </div>
 
 <script type="module">
-import { getApp_, getDb, getHistoryOnce, resetAll, PRICE_PER_MEAL } from "./Db.js";
+import { getApp_, getDb, getHistoryOnce, resetAll, getActiveOrdersCountOnce, withTimeout, PRICE_PER_MEAL } from "./Db.js";
 import { requireAuth } from "./Auth.js";
 import { checkAdminPassword } from "./AdminAuth.js";
 
@@ -143,12 +143,35 @@ function toCsv(list) {
 }
 
 document.getElementById("reset-btn").onclick = async () => {
-  if (!confirm("本当にリセットしますか?この操作は取り消せません。")) return;
+  if (!navigator.onLine) {
+    alert("オフラインのようです。通信状態を確認してください。");
+    return;
+  }
   const btn = document.getElementById("reset-btn");
   btn.disabled = true;
+  btn.textContent = "確認中...";
+  let activeCount = 0;
+  try {
+    activeCount = await withTimeout(getActiveOrdersCountOnce(db));
+  } catch (e) {
+    alert("エラー: " + e.message);
+    btn.disabled = false;
+    btn.textContent = "CSVエクスポート → リセット";
+    return;
+  }
+
+  const confirmMsg = activeCount > 0
+    ? `まだ受け渡しが完了していない注文が${activeCount}件あります。\nこのままリセットすると、その注文情報もすべて削除されます。\n本当にリセットしますか?この操作は取り消せません。`
+    : "本当にリセットしますか?この操作は取り消せません。";
+  if (!confirm(confirmMsg)) {
+    btn.disabled = false;
+    btn.textContent = "CSVエクスポート → リセット";
+    return;
+  }
+
   btn.textContent = "処理中...";
   try {
-    const exported = await resetAll(db);
+    const exported = await withTimeout(resetAll(db), 15000);
     const csv = toCsv(exported.sort((a, b) => a.historyId - b.historyId));
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
