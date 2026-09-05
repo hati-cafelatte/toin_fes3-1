@@ -1,7 +1,7 @@
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import {
   getFirestore, doc, setDoc, addDoc, deleteDoc, collection, onSnapshot,
-  runTransaction, serverTimestamp, query, orderBy, where, getDocs, getDoc, writeBatch
+  runTransaction, serverTimestamp, query, orderBy, where, getDocs, getDoc, writeBatch, increment
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -70,19 +70,12 @@ export function watchCurrentDay(db, cb) {
   });
 }
 
-// 指定した日の、取消を除いた累計食数(受付ページの「本日◯食目」表示用)
-export async function getDayItemCountOnce(db, day) {
-  const snap = await getDocs(query(
-    collection(db, "orderHistory"),
-    where("day", "==", day),
-    where("canceled", "==", false)
-  ));
-  let total = 0;
-  snap.forEach((d) => {
-    const data = d.data();
-    total += (data.normal || 0) + (data.spicy || 0);
-  });
-  return total;
+// 指定した日の累計食数(受付ページの「本日◯食目」表示用)。
+// dayStats/{day} ドキュメントの itemCount フィールドを1回読むだけ(= read 1件)。
+// この値は createOrder/cancelOrder の中で increment() によって加算/減算されている。
+export async function getDayItemCount(db, day) {
+  const snap = await getDoc(doc(db, "dayStats", String(day)));
+  return snap.exists() ? (snap.data().itemCount || 0) : 0;
 }
 
 // 注文番号(queueState)とその日の履歴番号(counters)だけをリセットし、
@@ -148,6 +141,8 @@ export async function createOrder(db, { normal, spicy }, maxOrderNumber) {
     });
     tx.set(queueStateRef, { slots: newSlots, lastAssigned: assigned }, { merge: true });
     tx.set(counterRef, { historyCounter: nextHistoryId }, { merge: true });
+    // その日の累計食数カウンタに加算(全件数え直しを避けるため)
+    tx.set(doc(db, "dayStats", String(currentDay)), { itemCount: increment(normal + spicy) }, { merge: true });
 
     return assigned;
   });
@@ -197,6 +192,11 @@ export async function cancelOrder(db, orderId, queueNumber, historyDocId) {
     if (historyRef && historySnap && historySnap.exists()) {
       tx.set(historyRef, { canceled: true, canceledAt: serverTimestamp() }, { merge: true });
     }
+    // 取り消した分だけ、その注文が属する日の累計食数カウンタを減算する
+    const activeData = activeSnap.data();
+    const orderDay = activeData.day || 1;
+    const orderItems = (activeData.normal || 0) + (activeData.spicy || 0);
+    tx.set(doc(db, "dayStats", String(orderDay)), { itemCount: increment(-orderItems) }, { merge: true });
     return true;
   });
 }
@@ -224,6 +224,7 @@ export async function deleteDayData(db, day) {
   const batch = writeBatch(db);
   historySnap.forEach((d) => batch.delete(doc(db, "orderHistory", d.id)));
   activeSnap.forEach((d) => batch.delete(doc(db, "activeOrders", d.id)));
+  batch.delete(doc(db, "dayStats", String(day)));
 
   const currentDay = await getCurrentDayOnce(db);
   if (day === currentDay) {
@@ -239,9 +240,11 @@ export async function deleteDayData(db, day) {
 export async function resetAll(db) {
   const history = await getHistoryOnce(db);
   const activeSnap = await getDocs(collection(db, "activeOrders"));
+  const dayStatsSnap = await getDocs(collection(db, "dayStats"));
   const batch = writeBatch(db);
   history.forEach((h) => batch.delete(doc(db, "orderHistory", h.id)));
   activeSnap.forEach((d) => batch.delete(doc(db, "activeOrders", d.id)));
+  dayStatsSnap.forEach((d) => batch.delete(doc(db, "dayStats", d.id)));
   batch.set(doc(db, "meta", "counters"), { historyCounter: 0 });
   batch.set(doc(db, "meta", "queueState"), { slots: [], lastAssigned: 0 });
   batch.set(doc(db, "meta", "session"), { day: 1 });
