@@ -40,7 +40,6 @@
 <div class="overlay" id="done-modal" style="display:none;">
   <h2>注文番号</h2>
   <p style="font-size:4rem;font-weight:bold;" id="done-number"></p>
-  <p style="font-size:1.3rem;" id="done-price"></p>
   <p id="done-daycount"></p>
   <button class="btn" id="done-ok-btn">次の注文へ</button>
 </div>
@@ -97,7 +96,6 @@ document.getElementById("confirm-yes-btn").onclick = async () => {
     const num = await withTimeout(createOrder(db, { normal, spicy }, maxOrderNumber));
     document.getElementById("confirm-modal").style.display = "none";
     document.getElementById("done-number").textContent = num;
-    document.getElementById("done-price").textContent = `${((normal + spicy) * PRICE_PER_MEAL).toLocaleString()}円`;
     document.getElementById("done-modal").style.display = "flex";
 
     // 本日の累計食数(取消は含まない、今回の注文も含む)を取得して表示。
