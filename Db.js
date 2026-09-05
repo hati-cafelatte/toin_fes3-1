@@ -209,6 +209,15 @@ export async function getHistoryOnce(db) {
   return list;
 }
 
+// 指定した1日分の履歴だけを取得(全件取得を避けるため。admin通常表示ではこちらを使う)
+export async function getDayHistoryOnce(db, day) {
+  const snap = await getDocs(query(collection(db, "orderHistory"), where("day", "==", day)));
+  const list = [];
+  snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
+  list.sort((a, b) => (a.historyId || 0) - (b.historyId || 0));
+  return list;
+}
+
 // ---- 進行中の注文の件数だけ取得(リセット前の警告表示用) ----
 export async function getActiveOrdersCountOnce(db) {
   const snap = await getDocs(collection(db, "activeOrders"));
