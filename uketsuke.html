@@ -47,7 +47,7 @@
 <script type="module">
 import {
   getApp_, getDb, watchSettings, createOrder, withTimeout,
-  watchCurrentDay, getDayItemCountOnce, PRICE_PER_MEAL, DAY_RED_THRESHOLD
+  watchCurrentDay, getDayItemCount, PRICE_PER_MEAL, DAY_RED_THRESHOLD
 } from "./Db.js";
 import { requireAuth } from "./Auth.js";
 
@@ -103,7 +103,7 @@ document.getElementById("confirm-yes-btn").onclick = async () => {
     const daycountEl = document.getElementById("done-daycount");
     daycountEl.textContent = "";
     try {
-      const dayCount = await withTimeout(getDayItemCountOnce(db, currentDay), 5000);
+      const dayCount = await withTimeout(getDayItemCount(db, currentDay), 5000);
       daycountEl.textContent = `本日 ${dayCount}食目`;
       if (dayCount >= DAY_RED_THRESHOLD) {
         daycountEl.style.color = "#c00";
