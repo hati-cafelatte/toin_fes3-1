@@ -7,6 +7,7 @@ import { firebaseConfig } from "./firebase-config.js";
 
 const DEFAULT_SETTINGS = { maxOrderNumber: 30, newOrderThresholdMin: 2, reminderDisplaySec: 30 };
 export const PRICE_PER_MEAL = 300; // 1食あたりの価格(円)
+export const DAY_RED_THRESHOLD = 545; // その日の累計食数がこれ以上になったら赤文字にする閾値
 
 // 通信が固まった場合に一定時間で諦めてエラーを返すためのラッパー
 // (オフライン/電波不良でPromiseが永遠に解決しない事態を防ぐ)
@@ -60,6 +61,28 @@ export async function sendReminder(db) {
 export async function getCurrentDayOnce(db) {
   const snap = await getDoc(doc(db, "meta", "session"));
   return snap.exists() ? (snap.data().day || 1) : 1;
+}
+
+// リアルタイムで現在の日を監視(受付ページなどで使用)
+export function watchCurrentDay(db, cb) {
+  return onSnapshot(doc(db, "meta", "session"), (snap) => {
+    cb(snap.exists() ? (snap.data().day || 1) : 1);
+  });
+}
+
+// 指定した日の、取消を除いた累計食数(受付ページの「本日◯食目」表示用)
+export async function getDayItemCountOnce(db, day) {
+  const snap = await getDocs(query(
+    collection(db, "orderHistory"),
+    where("day", "==", day),
+    where("canceled", "==", false)
+  ));
+  let total = 0;
+  snap.forEach((d) => {
+    const data = d.data();
+    total += (data.normal || 0) + (data.spicy || 0);
+  });
+  return total;
 }
 
 // 注文番号(queueState)とその日の履歴番号(counters)だけをリセットし、
