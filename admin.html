@@ -34,12 +34,12 @@
 
   <hr style="margin:24px 0;">
   <h2>次の日へ進める</h2>
-  <p class="muted">注文番号を1からリセットして、翌日の受付を開始。<b>これまでのデータは消えません</b>(上のタブで日ごとに確認できる)。営業終了後・翌日の受付開始前に押す。</p>
+  <p class="muted">注文番号を1からリセットして、翌日の受付を開始します。<b>これまでのデータは消えません</b>(上のタブで日ごとに確認できます)。営業終了後・翌日の受付開始前に押してください。</p>
   <button class="btn" id="nextday-btn">次の日へ進める(番号だけリセット)</button>
 
   <hr style="margin:24px 0;">
   <h2>指定日のデータ削除(デバッグ用)</h2>
-  <p class="muted">動作確認で作ったテスト注文だけを消したいときに使う。選んだ日の注文履歴・進行中の注文がすべて削除される(<b>CSVには出力されない</b>)。選んだ日が現在受付中の日の場合、注文番号も1にリセットされる。</p>
+  <p class="muted">動作確認で作ったテスト注文だけを消したいときに使います。選んだ日の注文履歴・進行中の注文がすべて削除されます(<b>CSVには出力されません</b>)。選んだ日が現在受付中の日の場合、注文番号も1にリセットされます。</p>
   <label>削除する日
     <select id="delete-day-select"></select>
   </label>
@@ -245,13 +245,16 @@ document.getElementById("nextday-btn").onclick = async () => {
   }
 
   try {
+    const prevDay = currentDay;
     const nextDay = await withTimeout(startNewDay(db));
     await loadAll();
     selectedDay = nextDay;
     renderDayTabs();
     renderSummary();
     renderPage();
-    alert(`${nextDay}日目の受付を開始しました。番号は1からです。`);
+    // 前日のデータが消えていないことを目視確認できるよう件数を表示
+    const prevDayCount = history.filter((h) => (h.day || 1) === prevDay).length;
+    alert(`${nextDay}日目の受付を開始しました。番号は1からです。\n\n(確認: ${prevDay}日目のデータは${prevDayCount}件、削除されずそのまま残っています。上部のタブからいつでも見られます)`);
   } catch (e) {
     alert("エラー: " + e.message);
   } finally {
